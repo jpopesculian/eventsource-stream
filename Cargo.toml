@@ -1,0 +1,9 @@
+[package]
+name = "eventsource-stream"
+version = "0.1.0"
+authors = ["Julian Popescu <jpopesculian@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+reqwest = { version  = "0.10.6", features = ["stream"] }
+tokio = { version = "0.2.21", features = ["macros"] }
