@@ -3,7 +3,24 @@ name = "eventsource-stream"
 version = "0.1.0"
 authors = ["Julian Popescu <jpopesculian@gmail.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+homepage = "https://github.com/jpopesculian/eventsource-stream"
+documentation = "https://docs.rs/eventsource-stream/"
+repository = "https://github.com/jpopesculian/eventsource-stream"
+description = "A basic building block for building an Eventsource from a Stream of bytes"
+keywords = ["sse", "eventsource", "stream", "parse", "event"]
+categories = ["web-programming::http-client", "no-std", "parsing", "asynchronous"]
+
+[features]
+default = ["std"]
+std = ["failure/std", "futures-core/std"]
 
 [dependencies]
+futures-core = { version = "0.3.5", default-features = false }
+failure = { version = "0.1.8", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
 reqwest = { version  = "0.10.6", features = ["stream"] }
 tokio = { version = "0.2.21", features = ["macros"] }
+futures = "0.3.0"
