@@ -12,8 +12,16 @@
 //!     .bytes_stream()
 //!     .eventsource();
 //!
-//! while let Some(thing) = stream.next().await {
-//!    println!("{:?}", thing);
+//!
+//! while let Some(event) = stream.next().await {
+//!     match event {
+//!         Ok(event) => println!(
+//!             "received: {:?}: {}",
+//!             event.event,
+//!             String::from_utf8_lossy(&event.data)
+//!         ),
+//!         Err(e) => eprintln!("error occured: {}", e),
+//!     }
 //! }
 //! ```
 
@@ -174,7 +182,8 @@ struct EventStreamTransformerProjection<'a, S> {
 }
 
 impl<S> EventStreamTransformer<S> {
-    fn wrap(stream: S) -> Self {
+    /// Wrap a stream of bytes
+    pub fn wrap(stream: S) -> Self {
         Self {
             buffer: Vec::default(),
             field: None,

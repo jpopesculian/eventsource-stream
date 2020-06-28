@@ -11,8 +11,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bytes_stream()
         .eventsource();
 
-    while let Some(thing) = stream.next().await {
-        println!("{:?}", thing);
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(event) => println!(
+                "received: {:?}: {}",
+                event.event,
+                String::from_utf8_lossy(&event.data)
+            ),
+            Err(e) => eprintln!("error occured: {}", e),
+        }
     }
 
     Ok(())
