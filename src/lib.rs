@@ -34,7 +34,9 @@ extern crate alloc;
 extern crate failure;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{collections::VecDeque, string::String, vec::Vec};
+#[cfg(feature = "std")]
+use std::collections::VecDeque;
 
 use core::pin::Pin;
 use core::time::Duration;
@@ -166,8 +168,7 @@ pub struct EventStreamTransformer<S> {
     field: Option<Field>,
     event: Event,
     state: State,
-    parsing_errors: Vec<ParseError>,
-    events: Vec<Event>,
+    results: VecDeque<Result<Event, ParseError>>,
     stream: S,
 }
 
@@ -176,9 +177,8 @@ struct EventStreamTransformerProjection<'a, S> {
     field: &'a mut Option<Field>,
     event: &'a mut Event,
     state: &'a mut State,
-    parsing_errors: &'a mut Vec<ParseError>,
-    events: &'a mut Vec<Event>,
-    stream: Pin<&'a mut S>,
+    results: &'a mut VecDeque<Result<Event, ParseError>>,
+    stream: &'a mut S,
 }
 
 impl<S> EventStreamTransformer<S> {
@@ -189,8 +189,7 @@ impl<S> EventStreamTransformer<S> {
             field: None,
             event: Event::default(),
             state: State::ReadingField,
-            parsing_errors: Vec::default(),
-            events: Vec::default(),
+            results: Default::default(),
             stream,
         }
     }
@@ -204,9 +203,8 @@ impl<S> EventStreamTransformer<S> {
                 field: &mut inner.field,
                 event: &mut inner.event,
                 state: &mut inner.state,
-                parsing_errors: &mut inner.parsing_errors,
-                events: &mut inner.events,
-                stream: Pin::new_unchecked(&mut inner.stream),
+                results: &mut inner.results,
+                stream: &mut inner.stream,
             }
         }
     }
@@ -222,87 +220,98 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let this = self.projection();
 
-        if let Some(err) = this.parsing_errors.pop() {
-            return Poll::Ready(Some(Err(Error::Parse(err))));
-        }
-        if let Some(event) = this.events.pop() {
-            return Poll::Ready(Some(Ok(event)));
+        if let Some(res) = this.results.pop_back() {
+            return Poll::Ready(Some(res.map_err(Error::Parse)));
         }
         if matches!(this.state, State::Closed) {
             return Poll::Ready(None);
         }
 
-        let chunk = match this.stream.poll_next(cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(None) => {
-                if !this.event.is_empty() {
-                    this.events.push(mem::take(this.event));
+        loop {
+            let stream = unsafe { Pin::new_unchecked(&mut *this.stream) };
+            let chunk = match stream.poll_next(cx) {
+                Poll::Pending => {
+                    if let Some(res) = this.results.pop_back() {
+                        return Poll::Ready(Some(res.map_err(Error::Parse)));
+                    }
+                    return Poll::Pending;
                 }
-                *this.state = State::Closed;
-                return Poll::Pending;
-            }
-            Poll::Ready(Some(Err(e))) => {
-                return Poll::Ready(Some(Err(Error::Transport(e))));
-            }
-            Poll::Ready(Some(Ok(chunk))) => chunk,
-        };
+                Poll::Ready(None) => {
+                    if !this.event.is_empty() {
+                        this.results.push_front(Ok(mem::take(this.event)));
+                    }
+                    *this.state = State::Closed;
+                    if let Some(res) = this.results.pop_back() {
+                        return Poll::Ready(Some(res.map_err(Error::Parse)));
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(Error::Transport(e))));
+                }
+                Poll::Ready(Some(Ok(chunk))) => chunk,
+            };
 
-        for byte in chunk.as_ref() {
-            match byte {
-                b'\n' => match this.state {
-                    State::ReadingField => {
-                        this.parsing_errors
-                            .push(ParseError::UnexpectedEndOfLine(mem::take(this.buffer)));
-                        *this.field = None;
-                        *this.state = State::NextLine;
-                    }
-                    State::ReadingValue => {
-                        if let Err(e) = this
-                            .event
-                            .set_field(mem::take(this.field), mem::take(this.buffer))
-                        {
-                            this.parsing_errors.push(e);
-                        }
-                        *this.state = State::NextLine;
-                    }
-                    State::NextLine => {
-                        this.events.push(mem::take(this.event));
-                        this.buffer.clear();
-                        *this.field = None;
-                        *this.state = State::ReadingField;
-                    }
-                    State::Closed => unreachable!(),
-                },
-                b':' => match this.state {
-                    State::ReadingField => {
-                        match Field::from_bytes(mem::take(this.buffer)) {
-                            Ok(next_field) => {
-                                *this.field = Some(next_field);
+            for byte in chunk.as_ref() {
+                match byte {
+                    b'\n' => match this.state {
+                        State::ReadingField => {
+                            if !this.buffer.is_empty() {
+                                this.results.push_front(Err(ParseError::UnexpectedEndOfLine(
+                                    mem::take(this.buffer),
+                                )));
+                                this.buffer.clear();
                             }
-                            Err(e) => {
-                                this.parsing_errors.push(e);
-                            }
+                            *this.field = None;
+                            *this.state = State::NextLine;
                         }
-                        *this.state = State::ReadingValue;
-                    }
-                    State::ReadingValue => {
+                        State::ReadingValue => {
+                            if let Err(e) = this
+                                .event
+                                .set_field(mem::take(this.field), mem::take(this.buffer))
+                            {
+                                this.results.push_front(Err(e));
+                            }
+                            *this.state = State::NextLine;
+                        }
+                        State::NextLine => {
+                            this.results.push_front(Ok(mem::take(this.event)));
+                            this.buffer.clear();
+                            *this.field = None;
+                            *this.state = State::ReadingField;
+                        }
+                        State::Closed => unreachable!(),
+                    },
+                    b':' => match this.state {
+                        State::ReadingField => {
+                            match Field::from_bytes(mem::take(this.buffer)) {
+                                Ok(next_field) => {
+                                    *this.field = Some(next_field);
+                                }
+                                Err(e) => {
+                                    this.results.push_front(Err(e));
+                                }
+                            }
+                            *this.state = State::ReadingValue;
+                        }
+                        State::ReadingValue => {
+                            this.buffer.push(*byte);
+                        }
+                        State::NextLine => {
+                            this.results.push_front(Err(ParseError::EmptyField));
+                            *this.state = State::ReadingValue;
+                        }
+                        State::Closed => unreachable!(),
+                    },
+                    byte => {
+                        if matches!(this.state, State::NextLine) {
+                            *this.state = State::ReadingField;
+                        }
                         this.buffer.push(*byte);
                     }
-                    State::NextLine => {
-                        this.parsing_errors.push(ParseError::EmptyField);
-                        *this.state = State::ReadingValue;
-                    }
-                    State::Closed => unreachable!(),
-                },
-                byte => {
-                    if matches!(this.state, State::NextLine) {
-                        *this.state = State::ReadingField;
-                    }
-                    this.buffer.push(*byte);
                 }
             }
         }
-        Poll::Pending
     }
 }
 

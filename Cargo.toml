@@ -1,8 +1,9 @@
 [package]
 name = "eventsource-stream"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Julian Popescu <jpopesculian@gmail.com>"]
 edition = "2018"
+resolver = "2"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 homepage = "https://github.com/jpopesculian/eventsource-stream"
@@ -17,10 +18,10 @@ default = ["std"]
 std = ["failure/std", "futures-core/std"]
 
 [dependencies]
-futures-core = { version = "0.3.5", default-features = false }
-failure = { version = "0.1.8", default-features = false, features = ["derive"] }
+futures-core = { version = "0.3", default-features = false }
+failure = { version = "0.1", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
-reqwest = { version  = "0.10.6", features = ["stream"] }
-tokio = { version = "0.2.21", features = ["macros"] }
-futures = "0.3.0"
+reqwest = { version  = "0.11", features = ["stream"] }
+tokio = { version = "1.0", features = ["macros", "rt"] }
+futures = "0.3"
