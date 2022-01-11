@@ -1,8 +1,5 @@
 #[cfg(not(feature = "std"))]
-use alloc::{
-    string::{FromUtf8Error, String, ToString},
-    vec::Vec,
-};
+use alloc::string::{FromUtf8Error, String, ToString};
 
 #[cfg(feature = "std")]
 use std::string::FromUtf8Error;
