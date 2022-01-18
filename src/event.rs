@@ -4,7 +4,7 @@ use alloc::string::String;
 use core::time::Duration;
 
 /// An Event
-#[derive(Default, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Event {
     /// The event name if given
     pub event: String,
@@ -14,4 +14,15 @@ pub struct Event {
     pub id: String,
     /// Retry duration if given
     pub retry: Option<Duration>,
+}
+
+impl Default for Event {
+    fn default() -> Self {
+        Self {
+            event: "message".to_string(),
+            data: "".to_string(),
+            id: "".to_string(),
+            retry: None,
+        }
+    }
 }
