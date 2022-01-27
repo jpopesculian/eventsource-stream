@@ -302,6 +302,7 @@ mod tests {
             .await
             .unwrap(),
             vec![Event {
+                event: "message".to_string(),
                 data: "Hello, world!".to_string(),
                 ..Default::default()
             }]
@@ -315,6 +316,7 @@ mod tests {
             .await
             .unwrap(),
             vec![Event {
+                event: "message".to_string(),
                 data: "Hello, world!".to_string(),
                 ..Default::default()
             }]
@@ -329,6 +331,7 @@ mod tests {
             .await
             .unwrap(),
             vec![Event {
+                event: "message".to_string(),
                 data: "Hello, world!".to_string(),
                 ..Default::default()
             }]
@@ -350,6 +353,7 @@ mod tests {
             .await
             .unwrap(),
             vec![Event {
+                event: "message".to_string(),
                 data: "Hello,\nworld!".to_string(),
                 ..Default::default()
             }]
@@ -363,10 +367,12 @@ mod tests {
             .unwrap(),
             vec![
                 Event {
+                    event: "message".to_string(),
                     data: "Hello,".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "world!".to_string(),
                     ..Default::default()
                 }
@@ -392,14 +398,17 @@ data: This is the third message.
             .unwrap(),
             vec![
                 Event {
+                    event: "message".to_string(),
                     data: "This is the first message.".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "This is the second message, it\nhas two lines.".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "This is the third message.".to_string(),
                     ..Default::default()
                 }
@@ -451,6 +460,7 @@ data: 10
             .await
             .unwrap(),
             vec![Event {
+                event: "message".to_string(),
                 data: "YHOO\n+2\n10".to_string(),
                 ..Default::default()
             },]
@@ -474,15 +484,18 @@ data:  third event
             .unwrap(),
             vec![
                 Event {
+                    event: "message".to_string(),
                     id: "1".to_string(),
                     data: "first event".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "second event".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: " third event".to_string(),
                     ..Default::default()
                 }
@@ -503,10 +516,12 @@ data:
             .unwrap(),
             vec![
                 Event {
+                    event: "message".to_string(),
                     data: "".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "\n".to_string(),
                     ..Default::default()
                 },
@@ -525,10 +540,12 @@ data: test
             .unwrap(),
             vec![
                 Event {
+                    event: "message".to_string(),
                     data: "test".to_string(),
                     ..Default::default()
                 },
                 Event {
+                    event: "message".to_string(),
                     data: "test".to_string(),
                     ..Default::default()
                 },
