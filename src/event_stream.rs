@@ -104,6 +104,11 @@ impl EventBuilder {
         if is_lf(event.data.chars().next_back().unwrap()) {
             event.data.pop();
         }
+
+        if event.event.is_empty() {
+            event.event = "message".to_string();
+        }
+
         Some(event)
     }
 }
