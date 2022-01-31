@@ -1,8 +1,8 @@
 use eventsource_stream::Eventsource;
 use futures::stream::StreamExt;
 use http::response::Builder;
-use reqwest::ResponseBuilderExt;
 use reqwest::Response;
+use reqwest::ResponseBuilderExt;
 use url::Url;
 
 #[tokio::test]
@@ -11,7 +11,8 @@ async fn populate_fields() {
     let response = Builder::new()
         .status(200)
         .url(url.clone())
-        .body("
+        .body(
+            "
 
 :
 
@@ -24,15 +25,19 @@ id: my-id
 data:second
 
 data:ignored
-")
+",
+        )
         .unwrap();
     let response = Response::from(response);
     let mut stream = response.bytes_stream().eventsource();
 
     let event = stream.next().await.unwrap().unwrap();
     assert_eq!("my-event", event.event);
-    assert_eq!("line1
-line2", event.data);
+    assert_eq!(
+        "line1
+line2",
+        event.data
+    );
     assert_eq!("my-id", event.id);
     assert_eq!(std::time::Duration::from_millis(42), event.retry.unwrap());
 

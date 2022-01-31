@@ -57,21 +57,17 @@ pub fn is_bom(c: char) -> bool {
 
 #[inline]
 pub fn is_name_char(c: char) -> bool {
-    match c {
-        '\u{0000}'..='\u{0009}'
+    matches!(c, '\u{0000}'..='\u{0009}'
         | '\u{000B}'..='\u{000C}'
         | '\u{000E}'..='\u{0039}'
-        | '\u{003B}'..='\u{10FFFF}' => true,
-        _ => false,
-    }
+        | '\u{003B}'..='\u{10FFFF}')
 }
 
 #[inline]
 pub fn is_any_char(c: char) -> bool {
-    match c {
-        '\u{0000}'..='\u{0009}' | '\u{000B}'..='\u{000C}' | '\u{000E}'..='\u{10FFFF}' => true,
-        _ => false,
-    }
+    matches!(c, '\u{0000}'..='\u{0009}'
+        | '\u{000B}'..='\u{000C}'
+        | '\u{000E}'..='\u{10FFFF}')
 }
 
 #[inline]
