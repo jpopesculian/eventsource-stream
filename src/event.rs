@@ -4,7 +4,7 @@ use alloc::string::String;
 use core::time::Duration;
 
 /// An Event
-#[derive(Default, Debug, Eq, PartialEq)]
+#[derive(Default, Debug, Eq, PartialEq, Clone)]
 pub struct Event {
     /// The event name if given
     pub event: String,
