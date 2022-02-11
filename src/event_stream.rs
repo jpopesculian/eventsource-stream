@@ -13,7 +13,7 @@ use core::time::Duration;
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
 use nom::error::Error as NomError;
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 
 #[derive(Default, Debug)]
 struct EventBuilder {
@@ -129,8 +129,8 @@ impl EventStreamState {
     }
 }
 
+pin_project! {
 /// A Stream of events
-#[pin_project]
 pub struct EventStream<S> {
     #[pin]
     stream: Utf8Stream<S>,
@@ -138,6 +138,7 @@ pub struct EventStream<S> {
     builder: EventBuilder,
     state: EventStreamState,
     last_event_id: String,
+}
 }
 
 impl<S> EventStream<S> {

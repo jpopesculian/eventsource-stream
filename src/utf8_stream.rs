@@ -10,14 +10,15 @@ use std::string::FromUtf8Error;
 use core::pin::Pin;
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 
-#[pin_project]
+pin_project! {
 pub struct Utf8Stream<S> {
     #[pin]
     stream: S,
     buffer: Vec<u8>,
     terminated: bool,
+}
 }
 
 impl<S> Utf8Stream<S> {
