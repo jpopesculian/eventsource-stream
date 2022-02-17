@@ -142,7 +142,8 @@ pub struct EventStream<S> {
 }
 
 impl<S> EventStream<S> {
-    pub(crate) fn new(stream: S) -> Self {
+    /// Initialize the EventStream with a Stream
+    pub fn new(stream: S) -> Self {
         Self {
             stream: Utf8Stream::new(stream),
             buffer: String::new(),
@@ -150,6 +151,12 @@ impl<S> EventStream<S> {
             state: EventStreamState::NotStarted,
             last_event_id: String::new(),
         }
+    }
+
+    /// Set the last event ID of the stream. Useful for initializing the stream with a previous
+    /// last event ID
+    pub fn set_last_event_id(&mut self, id: impl Into<String>) {
+        self.last_event_id = id.into();
     }
 
     /// Get the last event ID of the stream
