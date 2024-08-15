@@ -38,4 +38,7 @@ mod utf8_stream;
 
 pub use event::Event;
 pub use event_stream::{EventStream, EventStreamError};
-pub use traits::Eventsource;
+pub use parser::{
+    is_any_char, is_bom, is_colon, is_cr, is_lf, is_name_char, is_space, RawEventLine,
+};
+pub use traits::{EventBuilder, Eventsource, SpecCompliantEventsource};

@@ -1,4 +1,4 @@
-use eventsource_stream::Eventsource;
+use eventsource_stream::SpecCompliantEventsource;
 use futures::stream::StreamExt;
 use http::response::Builder;
 use reqwest::Response;
@@ -10,7 +10,7 @@ async fn main() {
     let url = Url::parse("https://example.com").unwrap();
     let response = Builder::new()
         .status(200)
-        .url(url.clone())
+        .url(url)
         .body(
             "event: my-event\r\ndata:line1
 data: line2
@@ -22,7 +22,7 @@ id: my-id
         )
         .unwrap();
     let response = Response::from(response);
-    let mut stream = response.bytes_stream().eventsource();
+    let mut stream = response.bytes_stream().spec_compliant_eventsource();
 
     let event = stream.next().await.unwrap().unwrap();
     assert_eq!("my-event", event.event);

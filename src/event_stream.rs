@@ -15,13 +15,24 @@ use futures_core::task::{Context, Poll};
 use nom::error::Error as NomError;
 use pin_project_lite::pin_project;
 
+/// Allows for implementing custom handling of event lines.
+///
+/// The default implementation [`SpecCompliantEventBuilder`](crate::event_stream::SpecCompliantEventBuilder) is compliant with the HTML spec.
+pub trait EventBuilder {
+    fn add(&mut self, line: RawEventLine);
+
+    fn dispatch(&mut self) -> Option<Event>;
+
+    fn is_complete(&self) -> bool;
+}
+
 #[derive(Default, Debug)]
-struct EventBuilder {
+pub struct SpecCompliantEventBuilder {
     event: Event,
     is_complete: bool,
 }
 
-impl EventBuilder {
+impl EventBuilder for SpecCompliantEventBuilder {
     /// From the HTML spec
     ///
     /// -> If the field name is "event"
@@ -111,6 +122,10 @@ impl EventBuilder {
 
         Some(event)
     }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,23 +146,23 @@ impl EventStreamState {
 
 pin_project! {
 /// A Stream of events
-pub struct EventStream<S> {
+pub struct EventStream<S, E> {
     #[pin]
     stream: Utf8Stream<S>,
     buffer: String,
-    builder: EventBuilder,
+    builder: E,
     state: EventStreamState,
     last_event_id: String,
 }
 }
 
-impl<S> EventStream<S> {
+impl<S, E: EventBuilder> EventStream<S, E> {
     /// Initialize the EventStream with a Stream
-    pub fn new(stream: S) -> Self {
+    pub fn new(stream: S, builder: E) -> Self {
         Self {
             stream: Utf8Stream::new(stream),
             buffer: String::new(),
-            builder: EventBuilder::default(),
+            builder: builder,
             state: EventStreamState::NotStarted,
             last_event_id: String::new(),
         }
@@ -162,6 +177,12 @@ impl<S> EventStream<S> {
     /// Get the last event ID of the stream
     pub fn last_event_id(&self) -> &str {
         &self.last_event_id
+    }
+}
+
+impl<S> EventStream<S, SpecCompliantEventBuilder> {
+    pub fn default(stream: S) -> Self {
+        Self::new(stream, SpecCompliantEventBuilder::default())
     }
 }
 
@@ -209,7 +230,7 @@ impl<E> std::error::Error for EventStreamError<E> where E: fmt::Display + fmt::D
 
 fn parse_event<E>(
     buffer: &mut String,
-    builder: &mut EventBuilder,
+    builder: &mut impl EventBuilder,
 ) -> Result<Option<Event>, EventStreamError<E>> {
     if buffer.is_empty() {
         return Ok(None);
@@ -221,7 +242,7 @@ fn parse_event<E>(
                 let consumed = buffer.len() - rem.len();
                 let rem = buffer.split_off(consumed);
                 *buffer = rem;
-                if builder.is_complete {
+                if builder.is_complete() {
                     if let Some(event) = builder.dispatch() {
                         return Ok(Some(event));
                     }
@@ -233,10 +254,11 @@ fn parse_event<E>(
     }
 }
 
-impl<S, B, E> Stream for EventStream<S>
+impl<S, B, E, EB> Stream for EventStream<S, EB>
 where
     S: Stream<Item = Result<B, E>>,
     B: AsRef<[u8]>,
+    EB: EventBuilder,
 {
     type Item = Result<Event, EventStreamError<E>>;
 
@@ -303,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn valid_data_fields() {
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: Hello, world!\n\n"
             )]))
             .try_collect::<Vec<_>>()
@@ -316,7 +338,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![
+            EventStream::default(futures::stream::iter(vec![
                 Ok::<_, ()>("data: Hello,"),
                 Ok::<_, ()>(" world!\n\n")
             ]))
@@ -330,7 +352,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![
+            EventStream::default(futures::stream::iter(vec![
                 Ok::<_, ()>("data: Hello,"),
                 Ok::<_, ()>(""),
                 Ok::<_, ()>(" world!\n\n")
@@ -345,7 +367,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: Hello, world!\n"
             )]))
             .try_collect::<Vec<_>>()
@@ -354,7 +376,7 @@ mod tests {
             vec![]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: Hello,\ndata: world!\n\n"
             )]))
             .try_collect::<Vec<_>>()
@@ -367,7 +389,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: Hello,\n\ndata: world!\n\n"
             )]))
             .try_collect::<Vec<_>>()
@@ -391,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn spec_examples() {
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: This is the first message.
 
 data: This is the second message, it
@@ -423,7 +445,7 @@ data: This is the third message.
             ]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "event: add
 data: 73857293
 
@@ -457,7 +479,7 @@ data: 113411
             ]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data: YHOO
 data: +2
 data: 10
@@ -474,7 +496,7 @@ data: 10
             },]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 ": test stream
 
 data: first event
@@ -510,7 +532,7 @@ data:  third event
             ]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data
 
 data
@@ -536,7 +558,7 @@ data:
             ]
         );
         assert_eq!(
-            EventStream::new(futures::stream::iter(vec![Ok::<_, ()>(
+            EventStream::default(futures::stream::iter(vec![Ok::<_, ()>(
                 "data:test
 
 data: test
