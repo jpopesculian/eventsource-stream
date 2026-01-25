@@ -5,7 +5,7 @@ use alloc::string::{FromUtf8Error, String, ToString};
 use std::string::FromUtf8Error;
 
 use crate::event::Event;
-use crate::parser::{is_bom, is_lf, line, RawEventLine};
+use crate::parser::{is_bom, is_lf, line, RawEventLine, BOM_LEN};
 use crate::utf8_stream::{Utf8Stream, Utf8StreamError};
 use core::fmt;
 use core::pin::Pin;
@@ -268,7 +268,7 @@ where
                     } else {
                         *this.state = EventStreamState::Started;
                         if is_bom(string.chars().next().unwrap()) {
-                            &string[1..]
+                            &string[BOM_LEN..]
                         } else {
                             &string
                         }
