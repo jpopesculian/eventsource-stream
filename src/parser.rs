@@ -55,6 +55,8 @@ pub fn is_bom(c: char) -> bool {
     c == '\u{feff}'
 }
 
+pub const BOM_LEN: usize = '\u{feff}'.len_utf8();
+
 #[inline]
 pub fn is_name_char(c: char) -> bool {
     matches!(c, '\u{0000}'..='\u{0009}'
