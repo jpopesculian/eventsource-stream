@@ -1,18 +1,18 @@
 #[cfg(not(feature = "std"))]
-use alloc::string::{FromUtf8Error, String, ToString};
-
-#[cfg(feature = "std")]
-use std::string::FromUtf8Error;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::event::Event;
-use crate::parser::{is_bom, is_lf, line, RawEventLine};
-use crate::utf8_stream::{Utf8Stream, Utf8StreamError};
+use crate::parser::{is_lf, line, ValidatedRawEventLine};
+use core::convert::TryFrom;
 use core::fmt;
 use core::pin::Pin;
+use core::str::Utf8Error;
 use core::time::Duration;
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
-use nom::error::Error as NomError;
 use pin_project_lite::pin_project;
 
 #[derive(Default, Debug)]
@@ -42,9 +42,9 @@ impl EventBuilder {
     ///
     /// -> Otherwise
     ///    The field is ignored.
-    fn add(&mut self, line: RawEventLine) {
+    fn add(&mut self, line: ValidatedRawEventLine) {
         match line {
-            RawEventLine::Field(field, val) => {
+            ValidatedRawEventLine::Field(field, val) => {
                 let val = val.unwrap_or("");
                 match field {
                     "event" => {
@@ -67,31 +67,21 @@ impl EventBuilder {
                     _ => {}
                 }
             }
-            RawEventLine::Comment(_) => {}
-            RawEventLine::Empty => self.is_complete = true,
+            ValidatedRawEventLine::Comment => {}
+            ValidatedRawEventLine::Empty => self.is_complete = true,
         }
     }
 
     /// From the HTML spec
     ///
-    /// 1. Set the last event ID string of the event source to the value of the last event ID
-    /// buffer. The buffer does not get reset, so the last event ID string of the event source
-    /// remains set to this value until the next time it is set by the server.
-    /// 2. If the data buffer is an empty string, set the data buffer and the event type buffer
-    /// to the empty string and return.
-    /// 3. If the data buffer's last character is a U+000A LINE FEED (LF) character, then remove
-    /// the last character from the data buffer.
-    /// 4. Let event be the result of creating an event using MessageEvent, in the relevant Realm
-    /// of the EventSource object.
-    /// 5. Initialize event's type attribute to message, its data attribute to data, its origin
-    /// attribute to the serialization of the origin of the event stream's final URL (i.e., the
-    /// URL after redirects), and its lastEventId attribute to the last event ID string of the
-    /// event source.
-    /// 6. If the event type buffer has a value other than the empty string, change the type of
-    /// the newly created event to equal the value of the event type buffer.
+    /// 1. Set the last event ID string of the event source to the value of the last event ID buffer. The buffer does not get reset, so the last event ID string of the event source remains set to this value until the next time it is set by the server.
+    /// 2. If the data buffer is an empty string, set the data buffer and the event type buffer to the empty string and return.
+    /// 3. If the data buffer's last character is a U+000A LINE FEED (LF) character, then remove the last character from the data buffer.
+    /// 4. Let event be the result of creating an event using MessageEvent, in the relevant Realm of the EventSource object.
+    /// 5. Initialize event's type attribute to message, its data attribute to data, its origin attribute to the serialization of the origin of the event stream's final URL (i.e., the URL after redirects), and its lastEventId attribute to the last event ID string of the event source.
+    /// 6. If the event type buffer has a value other than the empty string, change the type of the newly created event to equal the value of the event type buffer.
     /// 7. Set the data buffer and the event type buffer to the empty string.
-    /// 8. Queue a task which, if the readyState attribute is set to a value other than CLOSED,
-    /// dispatches the newly created event at the EventSource object.
+    /// 8. Queue a task which, if the readyState attribute is set to a value other than CLOSED, dispatches the newly created event at the EventSource object.
     fn dispatch(&mut self) -> Option<Event> {
         let builder = core::mem::take(self);
         let mut event = builder.event;
@@ -114,7 +104,7 @@ impl EventBuilder {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum EventStreamState {
+enum EventStreamState {
     NotStarted,
     Started,
     Terminated,
@@ -130,26 +120,28 @@ impl EventStreamState {
 }
 
 pin_project! {
-/// A Stream of events
-pub struct EventStream<S> {
-    #[pin]
-    stream: Utf8Stream<S>,
-    buffer: String,
-    builder: EventBuilder,
-    state: EventStreamState,
-    last_event_id: String,
-}
+    /// A Stream of events
+    pub struct EventStream<S> {
+        #[pin]
+        stream: S,
+        buffer: Vec<u8>,
+        builder: EventBuilder,
+        state: EventStreamState,
+        last_event_id: String,
+        already_scanned: usize,
+    }
 }
 
 impl<S> EventStream<S> {
     /// Initialize the EventStream with a Stream
     pub fn new(stream: S) -> Self {
         Self {
-            stream: Utf8Stream::new(stream),
-            buffer: String::new(),
+            stream,
+            buffer: Vec::new(),
             builder: EventBuilder::default(),
             state: EventStreamState::NotStarted,
             last_event_id: String::new(),
+            already_scanned: 0,
         }
     }
 
@@ -165,30 +157,62 @@ impl<S> EventStream<S> {
     }
 }
 
-/// Error thrown while parsing an event line
-#[derive(Debug, PartialEq)]
-pub enum EventStreamError<E> {
-    /// Source stream is not valid UTF8
-    Utf8(FromUtf8Error),
-    /// Source stream is not a valid EventStream
-    Parser(NomError<String>),
-    /// Underlying source stream error
-    Transport(E),
+#[derive(Debug)]
+pub struct EventStreamError<E> {
+    kind: EventStreamErrorKind<E>,
 }
 
-impl<E> From<Utf8StreamError<E>> for EventStreamError<E> {
-    fn from(err: Utf8StreamError<E>) -> Self {
-        match err {
-            Utf8StreamError::Utf8(err) => Self::Utf8(err),
-            Utf8StreamError::Transport(err) => Self::Transport(err),
+impl<E> EventStreamError<E> {
+    pub fn is_utf8(&self) -> bool {
+        matches!(self.kind, EventStreamErrorKind::Utf8(_))
+    }
+
+    pub fn is_transport(&self) -> bool {
+        matches!(self.kind, EventStreamErrorKind::Transport(_))
+    }
+
+    pub fn as_transport(&self) -> Option<&E> {
+        match &self.kind {
+            EventStreamErrorKind::Utf8(_) => None,
+            EventStreamErrorKind::Transport(transport) => Some(transport),
+        }
+    }
+
+    pub fn into_transport(self) -> Option<E> {
+        match self.kind {
+            EventStreamErrorKind::Utf8(_) => None,
+            EventStreamErrorKind::Transport(transport) => Some(transport),
+        }
+    }
+
+    pub fn as_utf8(&self) -> Option<&Utf8Error> {
+        match &self.kind {
+            EventStreamErrorKind::Utf8(utf8) => Some(utf8),
+            EventStreamErrorKind::Transport(_) => None,
+        }
+    }
+
+    pub fn into_utf8(self) -> Option<Utf8Error> {
+        match self.kind {
+            EventStreamErrorKind::Utf8(utf8) => Some(utf8),
+            EventStreamErrorKind::Transport(_) => None,
         }
     }
 }
 
-impl<E> From<NomError<&str>> for EventStreamError<E> {
-    fn from(err: NomError<&str>) -> Self {
-        EventStreamError::Parser(NomError::new(err.input.to_string(), err.code))
+impl<E> From<EventStreamErrorKind<E>> for EventStreamError<E> {
+    fn from(kind: EventStreamErrorKind<E>) -> Self {
+        Self { kind }
     }
+}
+
+/// Error thrown while parsing an event line
+#[derive(Debug, PartialEq)]
+enum EventStreamErrorKind<E> {
+    /// Source stream is not valid UTF8
+    Utf8(Utf8Error),
+    /// Underlying source stream error
+    Transport(E),
 }
 
 impl<E> fmt::Display for EventStreamError<E>
@@ -196,10 +220,11 @@ where
     E: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Utf8(err) => f.write_fmt(format_args!("UTF8 error: {}", err)),
-            Self::Parser(err) => f.write_fmt(format_args!("Parse error: {}", err)),
-            Self::Transport(err) => f.write_fmt(format_args!("Transport error: {}", err)),
+        match &self.kind {
+            EventStreamErrorKind::Utf8(err) => f.write_fmt(format_args!("UTF8 error: {}", err)),
+            EventStreamErrorKind::Transport(err) => {
+                f.write_fmt(format_args!("Transport error: {}", err))
+            }
         }
     }
 }
@@ -207,31 +232,40 @@ where
 #[cfg(feature = "std")]
 impl<E> std::error::Error for EventStreamError<E> where E: fmt::Display + fmt::Debug + Send + Sync {}
 
-fn parse_event<E>(
-    buffer: &mut String,
+fn parse_event(
+    buffer: &mut Vec<u8>,
     builder: &mut EventBuilder,
-) -> Result<Option<Event>, EventStreamError<E>> {
+    already_scanned: &mut usize,
+) -> Result<Option<Event>, Utf8Error> {
     if buffer.is_empty() {
         return Ok(None);
     }
     loop {
-        match line(buffer.as_ref()) {
-            Ok((rem, next_line)) => {
-                builder.add(next_line);
-                let consumed = buffer.len() - rem.len();
-                let rem = buffer.split_off(consumed);
-                *buffer = rem;
-                if builder.is_complete {
-                    if let Some(event) = builder.dispatch() {
-                        return Ok(Some(event));
-                    }
-                }
+        let (rem, next_line) = match line(buffer.as_ref(), *already_scanned) {
+            Ok(o) => o,
+            Err(resume_from) => {
+                *already_scanned = resume_from;
+                return Ok(None);
             }
-            Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => return Err(err.into()),
+        };
+        let validated_line = ValidatedRawEventLine::try_from(next_line)?;
+        builder.add(validated_line);
+        let consumed = buffer.len() - rem.len();
+        let rem = buffer.split_off(consumed);
+
+        *already_scanned = 0;
+        *buffer = rem;
+        if builder.is_complete {
+            if let Some(event) = builder.dispatch() {
+                return Ok(Some(event));
+            }
         }
     }
 }
+
+// bom           = %xFEFF ; U+FEFF BYTE ORDER MARK
+/// Byte representation of the BOM
+pub(crate) const BOM: &[u8; 3] = &[0xEF, 0xBB, 0xBF];
 
 impl<S, B, E> Stream for EventStream<S>
 where
@@ -243,13 +277,13 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        match parse_event(this.buffer, this.builder) {
+        match parse_event(this.buffer, this.builder, this.already_scanned) {
             Ok(Some(event)) => {
                 *this.last_event_id = event.id.clone();
                 return Poll::Ready(Some(Ok(event)));
             }
-            Err(err) => return Poll::Ready(Some(Err(err))),
-            _ => {}
+            Ok(None) => {}
+            Err(e) => return Poll::Ready(Some(Err(EventStreamErrorKind::Utf8(e).into()))),
         }
 
         if this.state.is_terminated() {
@@ -258,33 +292,38 @@ where
 
         loop {
             match this.stream.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(string))) => {
-                    if string.is_empty() {
+                Poll::Ready(Some(Ok(slice))) => {
+                    let slice = slice.as_ref();
+                    if slice.is_empty() {
                         continue;
                     }
 
                     let slice = if this.state.is_started() {
-                        &string
+                        slice
                     } else {
                         *this.state = EventStreamState::Started;
-                        if is_bom(string.chars().next().unwrap()) {
-                            &string[1..]
+                        if slice.starts_with(BOM) {
+                            &slice[3..]
                         } else {
-                            &string
+                            slice
                         }
                     };
-                    this.buffer.push_str(slice);
+                    this.buffer.extend_from_slice(slice);
 
-                    match parse_event(this.buffer, this.builder) {
+                    match parse_event(this.buffer, this.builder, this.already_scanned) {
                         Ok(Some(event)) => {
                             *this.last_event_id = event.id.clone();
                             return Poll::Ready(Some(Ok(event)));
                         }
-                        Err(err) => return Poll::Ready(Some(Err(err))),
-                        _ => {}
+                        Ok(None) => {}
+                        Err(e) => {
+                            return Poll::Ready(Some(Err(EventStreamErrorKind::Utf8(e).into())))
+                        }
                     }
                 }
-                Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err.into()))),
+                Poll::Ready(Some(Err(err))) => {
+                    return Poll::Ready(Some(Err(EventStreamErrorKind::Transport(err).into())))
+                }
                 Poll::Ready(None) => {
                     *this.state = EventStreamState::Terminated;
                     return Poll::Ready(None);
@@ -298,6 +337,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
     use futures::prelude::*;
 
     #[tokio::test]
@@ -560,4 +601,12 @@ data: test
             ]
         );
     }
+
+    #[cfg(test)]
+    const _: () = {
+        fn _assert<T: Send + Sync>() {}
+        fn _check<S: Send + Sync>() {
+            _assert::<EventStream<S>>();
+        }
+    };
 }

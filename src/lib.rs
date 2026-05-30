@@ -34,7 +34,6 @@ mod event;
 mod event_stream;
 mod parser;
 mod traits;
-mod utf8_stream;
 
 pub use event::Event;
 pub use event_stream::{EventStream, EventStreamError};

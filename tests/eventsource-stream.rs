@@ -1,4 +1,4 @@
-use eventsource_stream::Eventsource;
+use eventsource_stream2::Eventsource;
 use futures::stream::StreamExt;
 use http::response::Builder;
 use reqwest::Response;
